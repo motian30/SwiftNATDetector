@@ -12,12 +12,8 @@ Once you have your Swift package set up, adding SwiftNATTypeDetector as a depend
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/swarm-cloud/SwiftNATTypeDetector.git", .upToNextMajor(from: "0.0.1"))
+    .package(url: "https://github.com/motian30/SwiftNATDetector.git", .upToNextMajor(from: "0.1.0"))
 ]
 ```
 
-## NAT类型探测的Swift实现
 
-参照了c#版的实现：https://github.com/HMBSbige/NatTypeTester
-<br>
-欢迎测试效果并反馈issue

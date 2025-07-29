@@ -1,5 +1,5 @@
 import XCTest
-@testable import SwiftNATTypeDetector
+@testable import SwiftNATDetector
 
 final class SwiftNATTypeDetectorTests: XCTestCase {
     func testExample() throws {
