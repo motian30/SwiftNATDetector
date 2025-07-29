@@ -20,7 +20,7 @@ public class StunClient {
     private static let DEFAULT_STUN_PORT: Int = 3478
     
     
-    public static func query(localIP: String,c: String? = nil) -> StunResult {
+    public static func query(localIP: String,stunHost: String? = nil) -> StunResult {
         return query(stunHost: stunHost ?? DEFAULT_STUN_HOST, stunPort: DEFAULT_STUN_PORT, localIP: localIP)
     }
     
