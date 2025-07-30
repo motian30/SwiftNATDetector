@@ -37,6 +37,13 @@ public class StunMessage {
     public private(set) var changeRequest: StunChangeRequest?
     public private(set) var errorCode: StunErrorCode?
     
+    public private(set) var responseOrigin: SocketAddress?
+    public private(set) var reflectedFrom: SocketAddress?
+    
+    public private(set) var otherAddress: SocketAddress?
+    public private(set) var xormappedAddress: SocketAddress?
+    public private(set) var xorRelayedAddress: SocketAddress?
+    
     private enum AttributeType: UInt {
         
         case MappedAddress = 0x0001
@@ -50,10 +57,14 @@ public class StunMessage {
         case ErrorCode = 0x0009
         case UnknownAttribute = 0x000A
         case ReflectedFrom = 0x000B
-        case XorMappedAddress = 0x8020
+        
         case XorOnly = 0x0021
         case ServerName = 0x8022
-        
+        case OtherAddress = 0x802C
+        case XORMappedAddress = 0x0020
+        case XORRelayAddress = 0x802B
+        case XORFrag = 0x8028
+
     }
     
     init(transactionId: [UInt8], type: StunMessageType, magicCookie: Int) {
@@ -67,12 +78,24 @@ public class StunMessage {
         for (index, _) in self.transactionId.enumerated() {
             self.transactionId[index] = UInt8.random(in: UInt8.min...UInt8.max)
         }
+        
     }
     
     convenience init(type: StunMessageType) {
         self.init()
         self.type = type
     }
+    
+    convenience init(type: StunMessageType, rfc5780: Bool) {
+        self.init()
+        self.type = type
+        if rfc5780{
+            self.magicCookie = 0x2112A442
+        }
+        
+    }
+    
+    
     
     convenience init(type: StunMessageType, changeRequest: StunChangeRequest) {
         self.init()
@@ -104,6 +127,8 @@ public class StunMessage {
         guard data.count >= 20 else {
             throw StunMessageError.IllegalArgumentException(msg: "Invalid STUN message value !")
         }
+        
+       
         
         var offset: Int = 0
         
@@ -163,9 +188,13 @@ public class StunMessage {
 
             // Type
             let attributeTypeValue = UInt(exactly: Int(data[offset++]) << 8 | Int(data[offset++]))!
+           // print("Got STUN attribute: 0x\(String(format: "%04X", attributeTypeValue))")
+
             guard let attributetype = AttributeType.init(rawValue: attributeTypeValue) else {
                 throw StunMessageError.IllegalArgumentException(msg: "Invalid STUN message type value !")
             }
+            
+           
             
             // Length
             let length = Int(data[offset++]) << 8 | Int(data[offset++])
@@ -212,7 +241,11 @@ public class StunMessage {
             // CHANGED-ADDRESS
             case AttributeType.ChangedAddress:
                 self.changedAddress = StunMessage.parseIPAddr(data: data, offset: &offset)
-            // MESSAGE-INTEGRITY
+            
+                // REFLECTED-FROM
+            case AttributeType.ReflectedFrom:
+                self.reflectedFrom = StunMessage.parseIPAddr(data: data, offset: &offset)
+                // MESSAGE-INTEGRITY
             case AttributeType.MessageIntegrity:
                 offset += length
             // ERROR-CODE
@@ -238,6 +271,13 @@ public class StunMessage {
             case AttributeType.UnknownAttribute:
                 offset += length
             // Unknown
+                
+            case .OtherAddress:
+                self.otherAddress = StunMessage.parseIPAddr(data: data, offset: &offset)
+            case .XORMappedAddress:
+                self.xormappedAddress = StunMessage.parseXorIPAddr(data: data, offset: &offset, transactionId: self.transactionId)
+            case .XORRelayAddress:
+                self.xorRelayedAddress = StunMessage.decodeXorMappedAddress(data: data, offset: &offset, magicCookie: self.magicCookie, transactionId: self.transactionId)
             default:
                 offset += length
             }
@@ -346,7 +386,8 @@ public class StunMessage {
             StunMessage.storeEndPoint(type: AttributeType.SourceAddress, endPoint: sourceAddress!, message: &msg, offset: &offset)
         } else if changedAddress != nil {
             StunMessage.storeEndPoint(type: AttributeType.ChangedAddress, endPoint: changedAddress!, message: &msg, offset: &offset)
-        } else if errorCode != nil {
+        
+        }else if errorCode != nil {
             /* 3489 11.2.9.
                 0                   1                   2                   3
                 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -411,6 +452,7 @@ public class StunMessage {
         return SocketAddress(ip: ip, port: port)
         
     }
+
     
     private static func storeEndPoint(type: AttributeType, endPoint: SocketAddress, message: inout [UInt8], offset: inout Int) {
         /*
@@ -445,6 +487,54 @@ public class StunMessage {
         message[offset++] = ipBytes[1]
         message[offset++] = ipBytes[2]
         message[offset++] = ipBytes[3]
+    }
+    
+    
+    private static func parseXorIPAddr(data: [UInt8], offset: inout Int, transactionId: [UInt8]) -> SocketAddress {
+        
+        
+   
+        // Skip reserved (1 byte) and family (1 byte)
+        offset += 2
+        
+        // Decode XOR Port
+        let rawPort = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
+        let port = Int(rawPort ^ 0x2112) // XOR with upper 16 bits of magic cookie (0x2112)
+        offset += 2
+        
+        // Decode XOR IP
+        var ipBytes = [UInt8]()
+        let magicCookie: [UInt8] = [0x21, 0x12, 0xA4, 0x42]
+        
+        for i in 0..<4 {
+            let b = data[offset + i] ^ magicCookie[i]
+            ipBytes.append(b)
+        }
+        offset += 4
+        
+        let ip = ipBytes.map { String($0) }.joined(separator: ".")
+        
+        return SocketAddress(ip: ip, port: port)
+    }
+    private static func decodeXorMappedAddress(data: [UInt8], offset: inout Int, magicCookie: Int, transactionId: [UInt8]) -> SocketAddress {
+        // 0x00 unused, 0x01 family IPv4
+        offset += 1 // skip unused
+      
+        offset += 1
+        
+        let portXor = Int(data[offset]) << 8 | Int(data[offset+1])
+        let port = portXor ^ (magicCookie >> 16 & 0xFFFF)
+        offset += 2
+        
+        var ipBytes = [UInt8](repeating: 0, count: 4)
+        for i in 0..<4 {
+            ipBytes[i] = data[offset + i] ^ UInt8((magicCookie >> (8 * (3 - i))) & 0xFF)
+        }
+        offset += 4
+        
+        let ip = "\(ipBytes[0]).\(ipBytes[1]).\(ipBytes[2]).\(ipBytes[3])"
+        
+        return SocketAddress(ip: ip, port: port)
     }
     
 }

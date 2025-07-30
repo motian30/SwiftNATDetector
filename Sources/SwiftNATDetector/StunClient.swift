@@ -24,6 +24,10 @@ public class StunClient {
         return query(stunHost: stunHost ?? DEFAULT_STUN_HOST, stunPort: DEFAULT_STUN_PORT, localIP: localIP)
     }
     
+    public static func query5780(localIP: String,stunHost: String? = nil) -> StunResult {
+        return query5780(stunHost: stunHost ?? DEFAULT_STUN_HOST, stunPort: DEFAULT_STUN_PORT, localIP: localIP)
+    }
+    
     public static func query(stunHost: String, stunPort: Int, localIP: String) -> StunResult {
         
         let remoteEndPoint = SocketAddress(ip: stunHost, port: stunPort)
@@ -154,6 +158,55 @@ public class StunClient {
             return StunResult(natType: .Unknown)
         }
         
+    }
+    
+    public static func query5780(stunHost: String, stunPort: Int, localIP: String) -> StunResult {
+        do {
+            let primaryAddr = SocketAddress(ip: stunHost, port: stunPort)
+
+            let test1 = StunMessage(type: .BindingRequest,rfc5780: true)
+            guard let resp1 = try doTransaction(request: test1, remoteEndPoint: primaryAddr, timeout: .milliseconds(TRANSACTION_TIMEOUT)),
+                  let mapped1 = resp1.xormappedAddress ?? resp1.mappedAddress else {
+                return .init(natType: .UdpBlocked)
+            }
+           
+            guard let otherAddr = resp1.otherAddress else{
+                return query(stunHost: stunHost, stunPort: stunPort, localIP: localIP)
+            }
+            
+            let test2 = StunMessage(type: .BindingRequest)
+            guard let resp2 = try doTransaction(request: test2, remoteEndPoint: otherAddr, timeout: .milliseconds(TRANSACTION_TIMEOUT)),let mapped2 = resp2.xormappedAddress ?? resp2.mappedAddress else {
+                return .init(natType: .UdpBlocked)
+            }
+            
+            let test3 = StunMessage(type: .BindingRequest, changeRequest: .init(changeIp: false, changePort: true))
+            let resp3 = try? doTransaction(request: test3, remoteEndPoint: primaryAddr, timeout: .milliseconds(TRANSACTION_TIMEOUT))
+           
+            let isSameIP = localIP.toUint8Array().elementsEqual(mapped1.ip.toUint8Array())
+         
+            var type: NatType = .Unknown
+            if isSameIP {
+                type =  resp3 == nil ? .SymmetricUdpFirewall : .OpenInternet
+            }
+            
+            if mapped1.ip != mapped2.ip || mapped1.port != mapped2.port {
+                type = .Symmetric
+            }
+            
+            if let mapped3 = resp3?.xormappedAddress ?? resp3?.mappedAddress {
+                if mapped3.ip == mapped1.ip,mapped3.port == mapped1.port {
+                    type = .FullCone
+                } else {
+                    type = .RestrictedCone
+                }
+            } else {
+                type = .PortRestrictedCone
+            }
+            return .init(natType: type, ipAddr: mapped1)
+            
+        } catch {
+            return .init(natType: .Unknown)
+        }
     }
     
     // Does STUN transaction. Returns transaction response or null if transaction failed.
