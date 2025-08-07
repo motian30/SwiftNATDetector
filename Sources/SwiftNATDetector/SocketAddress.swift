@@ -21,7 +21,10 @@ public extension String {
     func toUint8Array() -> [UInt8] {
         var result: [UInt8] = [UInt8]()
         for part in self.split(separator: ".") {
-            result.append(UInt8(part)!)
+            guard let p = UInt8(part) else{
+                continue
+            }
+            result.append(p)
         }
         return result
 }

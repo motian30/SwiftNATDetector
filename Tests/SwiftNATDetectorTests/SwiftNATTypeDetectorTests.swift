@@ -19,7 +19,5 @@ final class SwiftNATTypeDetectorTests: XCTestCase {
         
         let result = StunClient.query5780(localIP: localIp,stunHost: "stun.hot-chilli.net")
 
-        print(111,result.natType)
-        print(result.ipAddr)
     }
 }
